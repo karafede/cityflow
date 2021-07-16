@@ -58,7 +58,7 @@ for x in file:
     print(i)
     f = x.split(",")
     print(f)
-    if i == 1865:
+    if i == 6:
         break
 
 
@@ -161,6 +161,8 @@ ID_X = []
 ID_Y = []
 CLOSE_ID = []
 CLOSE_ID_xy = []
+ASSOCIATE_ID =[]
+DIST = []
 timedate = []
 timedate_CLOSE_ID = []
 file = open("zzz_report.txt")
@@ -169,8 +171,6 @@ for x in file:
     print(i)
     f = x.split(",")
     # print(f)
-    # if i == 1865:
-    #    break
     first_level = x.split("POINT_LIST")
     #### TIMESTAMP #####################################
     timestamp = first_level[0]
@@ -189,6 +189,8 @@ for x in file:
     detectedpeople = second_level.split('ID')
     people_ID = [s for s in detectedpeople if "DIST_LIST" in s]
     closed_people_ID = [s for s in detectedpeople if "DIST_LIST" not in s]
+    # if i == 13:
+    #     break
     ## get all ID...of the central point...
     for idx, element in enumerate(detectedpeople):
         if idx > 0:
@@ -208,25 +210,37 @@ for x in file:
                 ID_X.append(central_ID_x)
                 ID_Y.append(central_ID_y)
                 timedate.append(TS)
-                ## build a dictionary with ID, x, Y for each ID
+                ## build a DICTIONARY with ID, x, Y for each ID
                 list_ID = [central_ID_x, central_ID_y]
                 coords_dict[central_ID] = list_ID
-                # coords_dict.get(central_ID)
+    for idx, element in enumerate(detectedpeople):
+        if idx > 0:
+            if "DIST_LIST" in element:
+                central_ID = element.split("':")[1]
+                central_ID = int(central_ID.split(',')[0])
+        if idx > 0:
             if "DIST_LIST" not in element:
                 print('INPUT ---> ---> ---> closed_people_ID', idx, element)
+                ### keep track of the CENTRAL ID...
+                ASSOCIATE_ID.append(central_ID)
                 closed_ID = element.split("':")[1]
                 closed_ID = int(closed_ID.split(',')[0])
                 print('closed_ID:', closed_ID)
                 DIST_closed_ID = element.split(", 'DIST':")[1]
                 DIST_closed_ID = int(''.join(c for c in DIST_closed_ID if c.isdigit()))
                 print('DIST_closed_ID:', DIST_closed_ID)
-                ## get coordinates for the close_ID (there have different lenght compared to the central IDs)
-                CLOSE_ID.append(closed_ID)
+                ## get coordinates for the close_ID (different length compared to the central IDs)
                 CLOSE_ID_xy.append(coords_dict.get(closed_ID))
+                # if idx == 2:
+                #    break
+                ## populate list of all CLOSE IDs
+                CLOSE_ID.append(closed_ID)
+                ## populate list of all distancece of CLOSE IDs from the CENTRAL IDs
+                DIST.append(DIST_closed_ID)
                 timedate_CLOSE_ID.append(TS)
 
 
-## build dataframe for central points
+##-------- build dataframe for CENTRAL points --------############
 list_of_X_Y = list(zip(ID_X, ID_Y))
 df_X_Y = pd.DataFrame(list_of_X_Y, columns=['X', 'Y'])
 df_X_Y['timedate'] = timedate
@@ -236,27 +250,33 @@ df_X_Y = df_X_Y[['timedate', 'ID', 'X', 'Y']]
 # sort by 'timedate'
 df_X_Y.sort_values(['timedate'],ascending=True, inplace=True)
 
-## build dataframe for CLOSE points (NEAR NEIGHBORS)
+
+##------ build dataframe for CLOSE points (NEAR NEIGHBORS) ---####
 ## replace None vales with a [0,0] list
 res = [[0,0] if v is None else v for v in CLOSE_ID_xy]
 ## transform list of lists into list of tuples
 res = [tuple(l) for l in res]
 df_X_Y_CLOSE_ID = pd.DataFrame(res, columns=['CLOSE_X', 'CLOSE_Y'])
+## add other columns to the dataframe
 df_X_Y_CLOSE_ID['timedate'] = timedate_CLOSE_ID
-df_X_Y_CLOSE_ID['ID'] = CLOSE_ID
+df_X_Y_CLOSE_ID['CLOSE_ID'] = CLOSE_ID
+df_X_Y_CLOSE_ID['ID'] = ASSOCIATE_ID
+df_X_Y_CLOSE_ID['DIST'] = DIST
 ## order columns...
-df_X_Y_CLOSE_ID = df_X_Y_CLOSE_ID[['timedate', 'ID', 'CLOSE_X', 'CLOSE_Y']]
+df_X_Y_CLOSE_ID = df_X_Y_CLOSE_ID[['timedate', 'ID', 'CLOSE_ID', 'CLOSE_X', 'CLOSE_Y', 'DIST']]
 # sort by 'timedate'
 df_X_Y_CLOSE_ID.sort_values(['timedate'],ascending=True, inplace=True)
 ## set 0 values to blank
 df_X_Y_CLOSE_ID[df_X_Y_CLOSE_ID[['CLOSE_X', 'CLOSE_Y']].eq(0)] = np.nan
-# df_X_Y_CLOSE_ID['CLOSE_X'][~np.isnan(df_X_Y_CLOSE_ID['CLOSE_X'])].astype(np.int64)
-# df_X_Y_CLOSE_ID['CLOSE_X'][~np.isnan(df_X_Y_CLOSE_ID['CLOSE_X'])].astype({"CLOSE_X": int})
 
 
 
 ## merge CENTRAL_IDs with CLOSE_IDs (near neighbors)
 DF_people = pd.merge(df_X_Y, df_X_Y_CLOSE_ID, on=['timedate', 'ID'], how='left')
+# DF_people = DF_people.replace(np.nan, '', regex=True)
+### remove rows with duplicated values in 'CLOSE_ID' and 'ID'
+DF_people = DF_people[DF_people['ID'] != DF_people['CLOSE_ID']]
+
 DF_people['timedate'] = DF_people['timedate'].astype('datetime64[ns]')
 ## define "date" only
 DF_people['date'] = DF_people['timedate'].apply(lambda x: x.strftime("%Y-%m-%d"))
@@ -271,60 +291,64 @@ DF_people['seconds'] = DF_people['timedate'].apply(lambda x: x.second)
 
 # sort by 'timedate'
 DF_people.sort_values(['timedate'],ascending=True, inplace=True)
-## set 0 values to blank
-
 
 type(DF_people)
-DF_people.dtypes
+# DF_people.dtypes
 
+
+
+###########################################################################
+#####------- plot TIMESERIES of people COUNTS ----- #######################
+############# CENTRAL PEOPLE ID ###########################################
 
 ### https://www.dataquest.io/blog/tutorial-time-series-analysis-with-pandas/
 ### get number of counts for each timestamp ###
 timestamps_counts = DF_people.groupby(DF_people[['timedate']].columns.tolist(), sort=False).size().reset_index().rename(columns={0:'counts'})
 ## timestamps with more registrations
-max=timestamp = timestamps_counts['timedate'][timestamps_counts.counts == max(timestamps_counts.counts)]
+max_timestamp = timestamps_counts['timedate'][timestamps_counts.counts == max(timestamps_counts.counts)]
 timestamps_counts.drop_duplicates(['timedate'], inplace=True)
 LIST_TIMESTAMPS = list(timestamps_counts.timedate.unique())
 
-
 timestamps_counts = DF_people.groupby(DF_people[['timedate', 'date', 'hour', 'minute', 'seconds']].columns.tolist(), sort=False).size().reset_index().rename(columns={0:'counts'})
-
 
 ## set the INDEX of the timeseries
 timestamps_counts = timestamps_counts.set_index('timedate')
-## plot a distribution of counts by timestamps
-sn.set(rc={'figure.figsize':(11, 4)})
-timestamps_counts['counts'].plot(linewidth=0.5)
 
-# better plots....
-ax = timestamps_counts.loc['2021-07-07', 'counts'].plot()
-ax.set_ylabel('number of people')
-#### resample by minutes
-##  zoom in further and look at 16:30 and 17:00
-# timestamps_counts = DF_people.groupby(DF_people[['timedate', 'date', 'hour', 'minute', 'seconds']].columns.tolist(), sort=False).size().reset_index().rename(columns={0:'counts'})
-# timestamps_counts = timestamps_counts.set_index('minute')
-# ax = timestamps_counts.loc['30':'57', 'counts'].plot()
 
-## make a resampling by minutes......
+####------ make a resampling by minutes......
 ## https://pandas.pydata.org/pandas-docs/stable/user_guide/timeseries.html
 # Specify the data columns we want to include (i.e. exclude Year, Month, Weekday Name)
 data_columns = ['counts']
 # Resample to minutely frequency, aggregating with mean
-timestamps_counts_mean = timestamps_counts[data_columns].resample('min').mean()
-timestamps_counts_mean.head(3)
+timestamps_counts_MIN_mean = timestamps_counts[data_columns].resample('min').mean()
+timestamps_counts_SECs_mean = timestamps_counts[data_columns].resample('S').mean()   ### 1 seconds
+timestamps_counts_SECs_mean = timestamps_counts[data_columns].resample('2S').mean()  ### 5 seconds
+
 
 # Start and end of the date range to extract
 start, end = '2021-07-07', '2021-07-07'
 # Plot daily and weekly resampled time series together
-fig, ax = plt.subplots()
-ax.plot(timestamps_counts.loc[start:end, 'counts'], marker='', linestyle='-', linewidth=0.5, label='by seconds')
-ax.plot(timestamps_counts_mean.loc[start:end, 'counts'], marker='o', markersize=8, linestyle='-', label='Minute Mean Resample')
+fig = plt.figure(figsize=(10,8))
+ax = fig.add_subplot(111)
+ax.plot(timestamps_counts.loc[start:end, 'counts'], marker='', linestyle='dotted', linewidth=0.5, label='by timestamp',  color='gray')
+# ax.plot(timestamps_counts_SECs_mean.loc[start:end, 'counts'], marker='', linestyle='-', linewidth=0.5, label='by timestamp',  color='gray')
+ax.plot(timestamps_counts_MIN_mean.loc[start:end, 'counts'], marker='o', markersize=6, linestyle='solid', label='minute mean resample', color='red')
 ax.set_ylabel('number of people')
 ax.legend()
+ax.title.set_text('timeseries IDs and CLOSE IDs (2021-07-07)')
+plt.savefig("timeseries_people_ID_ALTRAN.png")
+plt.close()
 
+
+#### DISTANCES of CLOSE people from CENTRAL people
+np.mean(DF_people['DIST'][~np.isnan(DF_people['DIST'])].astype(np.int64))
+np.max(DF_people['CLOSE_X'][~np.isnan(DF_people['CLOSE_X'])].astype(np.int64))
+np.max(DF_people['X'][~np.isnan(DF_people['X'])].astype(np.int64))
+np.max(DF_people['CLOSE_Y'][~np.isnan(DF_people['CLOSE_Y'])].astype(np.int64))
+np.max(DF_people['Y'][~np.isnan(DF_people['Y'])].astype(np.int64))
 
 ################################################
-##### SPATIAL PLOT #############################(
+##### SPATIAL PLOT #############################
 
 # ## plot all data
 # sn.set_style('whitegrid')
@@ -337,99 +361,33 @@ ax.legend()
 
 ## https://stackoverflow.com/questions/14827650/pyplot-scatter-plot-marker-size
 
-'''
-fig = plt.figure()
-ax1 = fig.add_subplot(111)
-plt.scatter(DF_people.CLOSE_X, DF_people.CLOSE_Y, c='b', marker='s',s=30, label='CLOSE_people')
-plt.scatter(DF_people.X, DF_people.Y, c='r', marker='+', s=(10*72./fig.dpi)**2, label='central_people')
-plt.legend(loc='upper left')
-plt.show()
-'''
 
+fig = plt.figure(figsize=(10,8))
+ax1 = fig.add_subplot(111)
+ax1.patch.set_facecolor('white')
+ax1.patch.set_alpha(0.5)
+plt.scatter(DF_people.X, DF_people.Y, c='blue', marker='+', s=(10 * 72. / fig.dpi) ** 2, label='central_people')
+plt.scatter(DF_people.CLOSE_X, DF_people.CLOSE_Y, c='red', marker='s', s=15, label='CLOSE_people', alpha=0.2)
+plt.legend(loc='upper left')
+plt.grid(color='gray', linestyle='-', linewidth=1)
+plt.show()
+plt.savefig("map_people_ID_ALTRAN.png")
+plt.close()
+
+
+'''
 fig = plt.figure()
 ax1 = fig.add_subplot(111)
 ### make a loop to visualize time series
-for idx, timestamp in enumerate(LIST_TIMESTAMPS[0:2000]):
+for idx, timestamp in enumerate(LIST_TIMESTAMPS):
     # fig = plt.figure()
     # ax1 = fig.add_subplot(111)
     ## filter data by selected 'timestamp'
     selected_DF_people = DF_people[DF_people.timedate == timestamp]
     # print(selected_DF_people)
     plt.scatter(selected_DF_people.X, selected_DF_people.Y, c='blue', marker='+', s=(10 * 72. / fig.dpi) ** 2, label='central_people')
-    plt.scatter(selected_DF_people.CLOSE_X, selected_DF_people.CLOSE_Y, c='gray', marker='s', s=15, label='CLOSE_people', alpha=0.4)
-plt.show()
-
-
-
-
-############################################################################
-############################################################################
-############################################################################
-############################################################################
-####### OLD scripts ########################################################
-
-## get al keys...
-keys = Altran.keys()
-
-
-for key in Altran.keys():
-    track = Altran.get(key)
-    print(track)
-
-
-# if two lists of the adjacency list are identical, then take only the last one...
-
-for key, value in Altran.items():
-    Altran[key] = value
-    print(key, value)
-
-
-df = pd.DataFrame(list(Altran.items()),columns = ['column1','column2'])
-
-people = Altran.get('detectedPeople')
-for person, attr in people.items():
-    print(person)
-    print(attr["boundingBox"])
-    print(attr["closeId"])
-    print(attr["detectionConfidence"])
-
-
-timestamp = Altran.get('timestamp')
-
-for timestamp in [ Altran.get('timestamp') ]:
-    print(timestamp)
-
-for detectedpeople in Altran.get('detectedPeople'):
-    print(detectedpeople)
-
-## ge out some values (bound boxes)
-for timestamp in [Altran.get('timestamp')]:
-    print(timestamp)
-
-
-##########################################################
-#### bounding box of the image ###########################
-
-from photutils.aperture import BoundingBox
-from matplotlib import patches, text, patheffects
-import matplotlib.patches as pac
-
-
-## get bounding box assigned to each person
-people = Altran.get('detectedPeople')
-for person, attr in people.items():
-       boundingBox = attr["boundingBox"]
-       bbox = BoundingBox(boundingBox[0], boundingBox[1], boundingBox[2], boundingBox[3])
-       print(bbox)
-       print('shape:', bbox.shape)
-       print('extent:', bbox.extent)
-       print('center:', bbox.center)
-       plt.axes()
-       rectangle = pac.Rectangle((boundingBox[0], 0), bbox.shape[1], bbox.shape[0], fill=False, edgecolor='red', lw=2)
-       plt.gca().add_patch(rectangle)
-       plt.axis('scaled')
-       plt.show()
-       # plt.close()
-
-
+    plt.scatter(selected_DF_people.CLOSE_X, selected_DF_people.CLOSE_Y, c='red', marker='s', s=15, label='CLOSE_people', alpha=0.3)
+    plt.legend(loc='upper left')
+    plt.show()
+'''
 
