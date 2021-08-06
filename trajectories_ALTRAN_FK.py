@@ -1,6 +1,7 @@
 
 import os
 os.chdir('D:/Federico/CityFLows')
+# os.chdir(('C:\\Users\\Federico\\ownCloud\\CityFLows'))
 os.getcwd()
 
 import numpy as np
@@ -13,7 +14,6 @@ import osmnx as ox
 import networkx as nx
 import math
 import momepy
-from funcs_network_FK import roads_type_folium
 from shapely import geometry
 from shapely.geometry import Point, Polygon
 import psycopg2
@@ -39,118 +39,17 @@ from geovoronoi.plotting import subplot_for_map, plot_voronoi_polys_with_points_
 from geovoronoi import voronoi_regions_from_coords, points_to_coords
 
 os.chdir('D:/Federico/CityFLows')
+# os.chdir('C:\\Users\\Federico\\ownCloud\\CityFLows')
 os.getcwd()
 
+
+
 ## read sample json from Altran
-with open('sample.json') as json_data:
+with open('sample2.json') as json_data:
     Altran = json.load(json_data)
-
-
-
-######################################################################
-##### NEW DATA FORMAT ################################################
-######################################################################
-
-i = 0
-file = open("zzz_report.txt")
-for x in file:
-    i = i+1
-    print(i)
-    f = x.split(",")
-    print(f)
-    if i == 6:
-        break
-
-
-## analyzed the structure of the file and by find people ID and near neighbors
-first_level = x.split("POINT_LIST")
-
-### ---------- ####
-### TIMESTSAMP ####
-### ---------- ####
-
-timestamp = first_level[0]
-timestamp = timestamp.split("':")
-TS = timestamp[1]
-TS = TS.split(",")
-TS = TS[0]
-TS = TS[2:28]
-
-date_time_str = TS
-date_time_obj = datetime.datetime.strptime(date_time_str, '%Y-%m-%d %H:%M:%S.%f')
-print('Date:', date_time_obj.date())
-print('Time:', date_time_obj.time())
-print('Date-time:', date_time_obj)
-
-
-########################################
-########################################
-
-second_level = first_level[1]
-detectedpeople = second_level.split('ID')
-type(detectedpeople)
-
-people_ID = [s for s in detectedpeople if "DIST_LIST" in s]
-type(people_ID)
-
-for idx, element in enumerate(detectedpeople):
-    if "DIST_LIST" in element:
-        print('index_people_ID:', idx, element)
-    if "DIST_LIST" not in element:
-        print('closed_people_ID', idx, element)
-
-closed_people_ID = [s for s in detectedpeople if "DIST_LIST" not in s]
-
-## get all ID...of the central point...
-for idx, element in enumerate(people_ID):
-    print(idx, element)
-    central_ID = element.split("':")[1]
-    central_ID = int(central_ID.split(',')[0])
-    print('central_ID:', central_ID)
-    central_ID_x = int((element.split(", 'X':")[1]).split(',')[0])
-    print('central_ID_x:',  central_ID_x)
-    central_ID_y = int((element.split(", 'Y':")[1]).split(',')[0])
-    print('central_ID_y:', central_ID_y)
-
-
-
-### NEW VERSION also including the closed people_ID
-## get all ID...of the central point...
-## define a DICTIONARY with the coordinates of all IDs for each timestamp
-coords_dict = {}
-for idx, element in enumerate(detectedpeople):
-    if idx > 0:
-        if "DIST_LIST" in element:
-            print('INPUT ---> index_people_ID:', idx, element)
-            # people_ID = [s for s in detectedpeople if "DIST_LIST" in s]
-            # print(idx, element)
-            central_ID = element.split("':")[1]
-            central_ID = int(central_ID.split(',')[0])
-            print('central_ID:', central_ID)
-            central_ID_x = int((element.split(", 'X':")[1]).split(',')[0])
-            print('central_ID_x:',  central_ID_x)
-            central_ID_y = int((element.split(", 'Y':")[1]).split(',')[0])
-            print('central_ID_y:', central_ID_y)
-            ## build a dictionary with ID, x, Y for each ID
-            list_ID = [central_ID_x, central_ID_y]
-            coords_dict[central_ID] = list_ID
-            coords_dict.get(central_ID)
-        if "DIST_LIST" not in element:
-            print('INPUT ---> ---> ---> closed_people_ID', idx, element)
-            closed_ID = element.split("':")[1]
-            closed_ID = int(closed_ID.split(',')[0])
-            print('closed_ID:', closed_ID)
-            DIST_closed_ID = element.split(", 'DIST':")[1]
-            DIST_closed_ID = int(''.join(c for c in DIST_closed_ID if c.isdigit()))
-            print('DIST_closed_ID:', DIST_closed_ID)
-
-
-
+people = Altran.get('detectedPeople')
 
 ########################################################################################
-########################################################################################
-########################################################################################
-########### ---------- put all together -------------- #################################
 ########################################################################################
 
 ## define a DICTIONARY with the coordinates of all IDs for each timestamp
@@ -165,12 +64,14 @@ ASSOCIATE_ID =[]
 DIST = []
 timedate = []
 timedate_CLOSE_ID = []
-file = open("zzz_report.txt")
-for x in file:
+# file = open("zzz_report.txt")
+for x in people:
+    print(x)
     i = i+1
     print(i)
+    ## transform into a string
+    x = str(x)
     f = x.split(",")
-    # print(f)
     first_level = x.split("POINT_LIST")
     #### TIMESTAMP #####################################
     timestamp = first_level[0]
@@ -353,15 +254,6 @@ np.max(DF_people['Y'][~np.isnan(DF_people['Y'])].astype(np.int64))
 ################################################
 ##### SPATIAL PLOT #############################
 
-# ## plot all data
-# sn.set_style('whitegrid')
-# sn.lmplot('CLOSE_X','CLOSE_Y',data = DF_people,
-#        palette=' blue',size=10,fit_reg=False)
-# sn.lmplot('X','Y',data = DF_people,
-#        palette='red',size=10,fit_reg=False)
-# plt.show()
-
-
 ## https://stackoverflow.com/questions/14827650/pyplot-scatter-plot-marker-size
 
 
@@ -411,13 +303,29 @@ for idx, timestamp in enumerate(LIST_TIMESTAMPS):
 #################################################################################################
 
 
+### groupby ID and get counts for each ID
+ID_counts = DF.groupby(DF[['ID']].columns.tolist(), sort=False).size().reset_index().rename(columns={0:'counts'})
+## summary statistics
+ID_counts.describe()
+
+fig = plt.hist(ID_counts['counts'], bins= 200)   # bins = 24, color = 'gold'
+plt.title('Distribution of Counts (for all IDs)')
+plt.xlabel("counts")
+plt.ylabel("Frequency")
+plt.savefig("counts_all_IDs.png")
+plt.close()
+
+## filter ID with counts < 15
+ID_counts = ID_counts[(ID_counts.counts <= 10)  & (ID_counts.counts >= 5)]
+
 ### --- PLOT all TRAJECTORIES ---- ####################################
 
 fig = plt.figure(figsize=(10,8))
 ax1 = fig.add_subplot(111)
 ax1.patch.set_facecolor('white')
 ax1.patch.set_alpha(0.5)
-LIST_IDs = list(DF.ID.unique())
+# LIST_IDs = list(DF.ID.unique())
+LIST_IDs = list(ID_counts.ID.unique())
 
 for idx, id in enumerate(LIST_IDs):
     # print(id)
@@ -431,7 +339,7 @@ for idx, id in enumerate(LIST_IDs):
     len_ID = len(selected_ID)
     # print(len_ID)
     if len_ID >= 2:  #32
-        selected_ID.plot('X','Y',ax=ax1, legend=None, color='red', linestyle='dotted', linewidth=0.6)
+        selected_ID.plot('X','Y',ax=ax1, legend=None, linestyle='solid', linewidth=2)
         print(id)
 plt.savefig("trajectories_ALL_ID_ALTRAN.png")
 plt.close()
@@ -443,7 +351,7 @@ fig = plt.figure(figsize=(10,8))
 ax1 = fig.add_subplot(111)
 ax1.patch.set_facecolor('white')
 ax1.patch.set_alpha(0.5)
-LIST_IDs = list(DF.ID.unique())
+
 
 for idx, id in enumerate(LIST_IDs):
     # print(id)
@@ -465,6 +373,7 @@ for idx, id in enumerate(LIST_IDs):
                 ax1.annotate('' + 'O', v, fontsize=10, color = 'red')  ### ORIGIN of the trajectory
             if (k ==len_ID-1):
                 ax1.annotate('' + 'D', v, fontsize=10, color = 'blue')  ### DESTINATION of the trajectory
+
 plt.savefig("trajectories_OD_ID_ALTRAN.png")
 plt.close()
 
@@ -577,3 +486,343 @@ plt.legend(loc='upper left')
 plt.grid(color='gray', linestyle='-', linewidth=1)
 plt.savefig("map_CLUSTERING_CENTRAL_ID_ALTRAN.png")
 plt.close()
+
+
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+
+###----- convert lat/lon to UTM (metric system) zone of Milano 32T ---######
+from pyproj import Proj
+import pyproj
+
+## define projection zone...
+## from EPSD:4326 ----> EPSG: 32632
+myProj = pyproj.Proj(proj='utm', zone=32, ellps='WGS84')
+ST_X,ST_Y = myProj(9.203477137061604, 45.4850803014196)
+print(ST_X,ST_Y)
+### go back to degrees..(from metric to degrees)
+
+print(myProj(ST_X,ST_Y,inverse=True))
+
+### convert all the X,Y points in real metric coordinates
+### !!! transform all cordinates into meters (they are in cm)
+DF['X'] = DF[['X']]/10 + ST_X
+DF['Y'] = DF[['Y']]/10 + ST_Y
+
+## make two empty lists for the X,Y coordnates in degrees
+transformed_X = []
+transformed_Y = []
+### convert all the metric coordinates into degrees
+zipped_X_Y = zip(list(DF['X']), list(DF['Y']))
+for (x, y) in zipped_X_Y:
+    print(x,y)
+    transformed = myProj(x, y, inverse=True)
+    transformed_X.append(transformed[0])
+    transformed_Y.append(transformed[1])
+
+## replace metric coordinates with degree coordinates
+DF['X'] = transformed_X
+DF['Y'] = transformed_Y
+
+
+
+##### define distance between two coordinates
+def haversine(coord1, coord2):
+    # Coordinates in decimal degrees (e.g. 43.60, -79.49)
+    lon1, lat1 = coord1
+    lon2, lat2 = coord2
+    R = 6371000  # radius of Earth in meters
+    phi_1 = np.radians(lat1)
+    phi_2 = np.radians(lat2)
+    delta_phi = np.radians(lat2 - lat1)
+    delta_lambda = np.radians(lon2 - lon1)
+    a = np.sin(delta_phi / 2.0) ** 2 + np.cos(phi_1) * np.cos(phi_2) * np.sin(delta_lambda / 2.0) ** 2
+    c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    meters = R * c  # output distance in meters
+    km = meters / 1000.0  # output distance in kilometers
+    meters = round(meters)
+    km = round(km, 3)
+    # print(f"Distance: {meters} m")
+    # print(f"Distance: {km} km")
+    return meters
+
+
+# define the extension of the EDGE file
+xmin, ymin, xmax, ymax = min(DF.X), min(DF.Y), max(DF.X), max(DF.Y)
+# East-West extent
+EW = haversine((xmin, ymin), (xmax, ymin))
+# North-South extent
+NS = haversine((xmin, ymin), (xmin, ymax))
+# diamter of each hexagon in the grid = 900 metres
+d = 1  # 1 meter
+# horizontal width of hexagon = w = d* sin(60)
+w = d * np.sin(np.pi / 3)
+# Approximate number of hexagons per row = EW/w
+n_cols = int(EW / w) + 1
+# Approximate number of hexagons per column = NS/d
+n_rows = int(NS / d) + 10
+
+# Make a hexagonal grid to cover the entire area
+from matplotlib.patches import RegularPolygon
+
+w = (xmax - xmin) / n_cols  # width of hexagon
+d = w / np.sin(np.pi / 3)  # diameter of hexagon
+array_of_hexes = []
+for rows in range(0, n_rows):
+    hcoord = np.arange(xmin, xmax, w) + (rows % 2) * w / 2
+    vcoord = [ymax - rows * d * 0.75] * n_cols
+    for x, y in zip(hcoord, vcoord):  # , colors):
+        hexes = RegularPolygon((x, y), numVertices=6, radius=d / 2, alpha=0.2, edgecolor='k')
+        verts = hexes.get_path().vertices
+        trans = hexes.get_patch_transform()
+        points = trans.transform(verts)
+        array_of_hexes.append(Polygon(points))
+
+hex_grid = gpd.GeoDataFrame({'geometry': array_of_hexes}, crs={'init': 'epsg:4326'})
+# hex_grid.plot()
+
+
+###--- make a geodataframe with all ther IDs points ---######
+array_of_points = []
+## transform all cordinates into meters (they are in cm)
+for x, y in zip(DF.X, DF.Y):
+    points = Point((x, y))
+    array_of_points.append(points)
+
+### make a goedataframe containing the POINTS
+points_gdf = gpd.GeoDataFrame(array_of_points,columns=['geometry'])
+points_gdf.plot()
+points_gdf.geometry.to_file(filename='ID_POINTS.geojson', driver='GeoJSON')
+
+
+## ---- INTERSECT all POINTS with the HEXAGONAL GRID ----- ####
+
+# get hexagons containing the points
+points_hex = gpd.sjoin(hex_grid, points_gdf, how='inner', op='intersects')
+points_hex.plot()
+
+points_hex.geometry.to_file(filename='points_hex.geojson', driver='GeoJSON')
+hex_grid.geometry.to_file(filename='hex_grid_10m.geojson', driver='GeoJSON')
+
+### reset indexes....
+points_hex.reset_index(level=0, inplace=True)
+hex_grid.reset_index(inplace=True)
+
+style_hex = {'fillColor': '#00000000', 'color': '#00FFFFFF'}
+style_edges = {'fillColor': '#00000000', 'color': '#000000'}
+style_egdes_hex = {'fillColor': '#00000000', 'color': '#ff0000'}
+
+
+#############################################################################################
+# create basemap around Catania
+ave_LAT = 45.4850803014196
+ave_LON = 9.203477137061604
+my_map = folium.Map([ave_LAT, ave_LON], zoom_start=28, tiles='cartodbpositron')
+
+## add ID points
+# folium.GeoJson('ID_POINTS.geojson', style_function=lambda x: style_edges).add_to((my_map))
+
+# add all ID points as highligths for each point (in blue)
+folium.GeoJson(
+    # data to plot
+    hex_grid[['index', 'geometry']].to_json(),
+    show=True,
+    style_function=lambda x: style_hex,
+    highlight_function=lambda x: {'weight': 1,
+                                  'color': 'yellow',
+                                  'fillOpacity': 0.2
+                                  },
+    # fields to show
+    tooltip=folium.features.GeoJsonTooltip(
+        fields=['index']
+    ),
+).add_to(my_map)
+
+
+folium.GeoJson(
+    # data to plot
+    points_hex[['index', 'geometry']].to_json(),
+    show=True,
+    style_function=lambda x: style_egdes_hex,
+    highlight_function=lambda x: {'weight': 1,
+                                  'color': 'yellow',
+                                  'fillOpacity': 0.2
+                                  },
+    # fields to show
+    tooltip=folium.features.GeoJsonTooltip(
+        fields=['index']
+    ),
+).add_to(my_map)
+
+my_map.save("hex_grid_1m.html")
+
+
+
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+##################################################################################
+#### --- divide the study area with hexagonal grids ---###########################
+
+# define the EXTENSION of the STUDY AREA file
+xmin, ymin, xmax, ymax = min(DF.X), min(DF.Y), max(DF.X), max(DF.Y)
+## transform all cordinates into meters (they are in cm)
+xmin, ymin, xmax, ymax = xmin/10, ymin/10, xmax/10, ymax/10
+# East-West extent of the study area
+# EW = math.hypot(xmin - ymin, xmax - ymin)
+EW = xmax - xmin
+# North-South extent of the study area
+# NS = math.hypot(xmin - ymin, xmin - ymax)
+NS = ymax-ymin
+# diamter of each hexagon in the grid = 900 metres
+d = 1  ## meters
+# horizontal width of hexagon = w = d* sin(60)
+w = d * np.sin(np.pi / 3)
+# Approximate number of hexagons per row = EW/w
+n_cols = int(EW / w) + 1
+# Approximate number of hexagons per column = NS/d
+n_rows = int(NS / d) + 10
+
+# Make a hexagonal grid to cover the entire area
+from matplotlib.patches import RegularPolygon
+import matplotlib.patches as pac
+
+fig = plt.figure(figsize=(10,8))
+ax1 = fig.add_subplot(111)
+ax1.patch.set_facecolor('white')
+ax1.patch.set_alpha(0.5)
+w = (xmax - xmin) / n_cols  # width of hexagon
+d = w / np.sin(np.pi / 3)  # diameter of hexagon
+array_of_hexes = []
+for rows in range(0, n_rows):
+    hcoord = np.arange(xmin, xmax, w) + (rows % 2) * w / 2
+    vcoord = [ymax - rows * d * 0.75]  * n_cols
+    # print(vcoord)
+    for x, y in zip(hcoord, vcoord):  # , colors):
+        hexes = RegularPolygon((x, y), numVertices=6, radius=d / 2, alpha=0.2, edgecolor='k')
+        verts = hexes.get_path().vertices
+        trans = hexes.get_patch_transform()
+        points = trans.transform(verts)
+        array_of_hexes.append(Polygon(points))
+        ax1.add_patch(hexes)
+plt.axis('scaled')
+ax1.set_xlim([xmin, xmax])
+ax1.set_ylim([ymin, ymax])
+
+
+'''
+fig = plt.figure(figsize=(10,8))
+ax1 = fig.add_subplot(111)
+ax1.patch.set_facecolor('white')
+ax1.patch.set_alpha(0.5)
+rectangle = pac.Rectangle((xmin,ymin), xmax, ymax,ec="red", fill=False, edgecolor='red')
+ax1.set_xlim([xmin, xmax])
+ax1.set_ylim([ymin, ymax])
+ax1.add_patch(rectangle)
+plt.axis('scaled')
+'''
+
+###--- make a geodataframe with all ther IDs points ---######
+array_of_points = []
+## transform all cordinates into meters (they are in cm)
+df_X = (DF.X)/10
+df_Y = (DF.Y)/10
+for x, y in zip(df_X, df_Y):
+    points = Point((x, y))
+    array_of_points.append(points)
+
+### make a goedataframe containing the POINTS
+points_gdf = gpd.GeoDataFrame(array_of_points,columns=['geometry'])
+points_gdf.plot()
+points_gdf.geometry.to_file(filename='ID_POINTS.geojson', driver='GeoJSON')
+
+### make a geodataframe
+hex_grid = gpd.GeoDataFrame(array_of_hexes,columns=['geometry'])
+hex_grid.plot()
+
+## ---- INTERSECT all POINTS with the HEXAGONAL GRID ----- ####
+
+# get hexagons containing the points
+points_hex = gpd.sjoin(hex_grid, points_gdf, how='inner', op='intersects')
+points_hex.plot()
+
+points_hex.geometry.to_file(filename='points_hex.geojson', driver='GeoJSON')
+hex_grid.geometry.to_file(filename='hex_grid_10m.geojson', driver='GeoJSON')
+
+### reset all indices
+points_hex.reset_index(level=0, inplace=True)
+hex_grid.reset_index(inplace=True)
+
+style_hex = {'fillColor': '#00000000', 'color': '#00FFFFFF'}
+style_edges = {'fillColor': '#00000000', 'color': '#000000'}
+style_egdes_hex = {'fillColor': '#00000000', 'color': '#ff0000'}
+
+
+#############################################################################################
+# create basemap around Catania
+ave_LAT = 37.53988692816245
+ave_LON = 15.044971594798902
+my_map = folium.Map([ave_LAT, ave_LON], zoom_start=11, tiles='cartodbpositron')
+
+## ---- add ID points to the basemap ---#########
+#################################################
+
+for i in range(len(df_X)):
+    folium.CircleMarker(location=[df_Y.iloc[i], df_X.iloc[i]],
+                        radius=1,
+                        color="black",
+                        fill=True,
+                        fill_color="black",
+                        fill_opacity=1).add_to(my_map)
+
+# add 'u' and 'v' as highligths for each edge (in blue)
+folium.GeoJson(
+    # data to plot
+    hex_grid[['index', 'geometry']].to_json(),
+    show=True,
+    style_function=lambda x: style_hex,
+    highlight_function=lambda x: {'weight': 1,
+                                  'color': 'yellow',
+                                  'fillOpacity': 0.2
+                                  },
+    # fields to show
+    tooltip=folium.features.GeoJsonTooltip(
+        fields=['index']
+    ),
+).add_to(my_map)
+
+
+folium.GeoJson(
+    # data to plot
+    points_hex[['index', 'geometry']].to_json(),
+    show=True,
+    style_function=lambda x: style_egdes_hex,
+    highlight_function=lambda x: {'weight': 1,
+                                  'color': 'yellow',
+                                  'fillOpacity': 0.2
+                                  },
+    # fields to show
+    tooltip=folium.features.GeoJsonTooltip(
+        fields=['index']
+    ),
+).add_to(my_map)
+
+my_map.save("hex_grid_1m.html")
+
+
