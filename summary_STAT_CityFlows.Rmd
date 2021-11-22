@@ -1,0 +1,1087 @@
+---
+title: "Data Analysis CityFLow Project"
+author:
+- Federico Karagulian
+date: "last version `r format(Sys.time(), '%d %B %Y, %H:%M')`"
+output:
+  word_document: 
+    reference_docx: word_style_FK.docx
+  pdf_document: default
+  html_document: default
+  number_sections: true
+  bookdown::word_document: default
+---
+
+*<br/><br/>*
+
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap = "**Tabella 1.**"}
+
+rm(list = ls())
+
+
+library(RPostgreSQL)
+library(lubridate)
+library(threadr)
+library(stringr)
+library(ggplot2)
+library(dplyr)
+library(openair)
+library(pander)
+library(ggrepel)
+library(grid)
+library(gridExtra)
+library(broom)
+library(tidyr)
+library(RColorBrewer)
+library(ggpmisc)
+library(varhandle)
+
+library(dplyr)
+library(lubridate)
+library(tidyr)
+library(readr)
+library(stringr)
+library(tools)
+library(ggplot2)
+library(ggpmisc)
+library(xtable)
+library(pander)
+library(formattable)
+library(rmarkdown)
+library(knitr)
+library(kableExtra)
+library(forcats)
+# library(bookdown)
+library(ggrepel)
+library(httr)
+library(scales)
+library(png)
+library(grid)
+library(gridExtra)
+
+options(scipen=5)
+
+setwd("D:/Federico/CityFLows/output_files")
+
+
+
+```
+
+
+## 1. Temporal trend of walking speed of pedestrian around the stazione Centrale in Milan
+
+Pedestrian speeds records were obtained from videos collected by three fixed camera located around three side of the train station **Stazione Centrale in Milan**. The station has one side entirely dedicated to the railway operations. The other three sides of the station face to public areas with the presence of pedestrian, taxis and public transportation such as, buses and subway entrances. One camera was located in the middle of the square **Piazza Duca d'Aosta**, that is the main square in front of the main entrance of the station. A second camera was located on the side of the station where there is the **taxi and bus area**. Finally, the third camera was located on the side of the station where there is an area dedicated to **bike and motorbike parking**. All threes sides of the station are crossed by pedestrians who enter into the stations or reach public transportation. Videos collected from the three cameras were processed through a **Computer Vision algorithm (CV)** developed at *Capgemini*. Images were processed by the CV algorithm at a frequency rate of 50 ms for a period raging from 06 to 23 October 2021. 
+
+Briefly, the raw data obtained from the CV algorithm consisted in a time series of unique identification numbers **(ID)** assigned to people targeted in the analyzed frame. Each ID was associated to its position, expressed in cm, in the analyzed area. **Table 1** shows an example of CV output.  
+
+*<br/><br/>*
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap = "**Table 1.**"}
+### Milano St. Centrale, Piazza Lato Biciclette
+DF <- read.csv('D:/Federico/CityFLows/output_files/MILANOCENTRALE1_from_2021-10-06__14h0min_to_2021-10-12__23h59min.txt')[-1]
+sample_data <- head(DF, 3)
+
+Caption <- paste0("**Table 1.** Attributes of the Computer Vision output. ID is the univoque people identification, X and Y are the centroid of the identified person. X and Y are expressed in units of cm.")
+set.caption(Caption)
+panderOptions("table.emphasize.rownames", FALSE) # remove row.names from the table
+panderOptions("table.split.table", Inf) # to avoid to split tables if rows are too long
+panderOptions('table.alignment.default', function(df) ifelse(sapply(df, is.numeric), 'right', 'left')) # right alignment for numeric, left otherwise
+pander(sample_data, emphasize.strong.cols = 1, missing = "")
+
+```
+
+*<br/><br/>*
+
+Data analysis was structure to achieve the following information:
+1. Density distribution of pedestrians over the analyzed areas. 
+2. Speed distribution of pedestrian over the analyzed areas. 
+3. Forward direction of pedestrian during two different time of the day.
+4. Both temporal and spatial distribution were carried out.
+Density, speed and directions were obtained processing the recurrence of the ID numbers assigned to each person together with the temporal sequence of their position. More precisely, for each, speed was estimated considering the distance between two consecutive positions of the pedestrian and the time intercurring between them. Outputs were initially averaged every **15 minutes** and then averaged by *hour* and by *day*. For the current analysis, only data larger than a forward motion speed of *0.3 m/s* where considered. On the other hand, a threshold speed value was set at *2.5 m/s*. 
+
+
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 1**. Image acquired from the camera located at site of Piazza Duca d'Aosta at the Stazione Centrale in Milan.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Camera_Duca_Aosta.png")
+```
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figura 2**. Image acquired from the camera located at site of Taxi-bus next to the Stazione Centrale in Milan.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Camera_Lato_Taxi.png")
+```
+
+
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap = "**Tabella 1.**"}
+
+### load MEAN SPEED & DENSITY data (mean speed & density for each ID every 15 minutes)
+
+## ---> speed forward motion
+speed_FWD_motion <- 0.3  ## units [m/s]
+minimum_speed <- 0.02
+
+## --> Milano Centrale piazza Duca d'Aosta
+setwd("D:/Federico/CityFLows/output_files")
+speed_duca_aosta <- read.csv("D:/Federico/CityFLows/output_files/all_ID_speeds_duca_aosta_angles.csv",header = T, sep=",")
+speed_duca_aosta <- speed_duca_aosta[ , !names(speed_duca_aosta) %in% c("angle_deg", "X", "Y") ]
+speed_duca_aosta$place <- "square Duca d'Aosta"
+speed_duca_aosta$place <- as.factor(speed_duca_aosta$place)
+
+density_duca_aosta <- read.csv("D:/Federico/CityFLows/output_files/all_ID_densities_duca_aosta_a.csv",header = T, sep=",")
+density_duca_aosta <- density_duca_aosta[ , !names(density_duca_aosta) %in% c("X", "Y") ]
+density_duca_aosta$place <-  "square Duca d'Aosta"
+density_duca_aosta$place <- as.factor(density_duca_aosta$place)
+
+
+## --> Milano Centrale Lato Taxi
+speed_lato_taxi <- read.csv("D:/Federico/CityFLows/output_files/all_ID_speeds_lato_taxi_angles.csv",header = T, sep=",")
+speed_lato_taxi <- speed_lato_taxi[ , !names(speed_lato_taxi) %in% c("angle_deg", "X", "Y") ]
+speed_lato_taxi$place <- "Taxi area"
+speed_lato_taxi$place <- as.factor(speed_lato_taxi$place)
+
+density_lato_taxi <- read.csv("D:/Federico/CityFLows/output_files/all_ID_densities_lato_taxi_a.csv",header = T, sep=",")
+density_lato_taxi <- density_lato_taxi[ , !names(density_lato_taxi) %in% c("X", "Y") ]
+density_lato_taxi$place <- "Taxi area"
+density_lato_taxi$place <- as.factor(density_lato_taxi$place)
+
+
+## --> Milano Centrale Lato Biciclette
+speed_lato_biciclette <- read.csv("D:/Federico/CityFLows/output_files/all_ID_speeds_lato_biciclette_angles.csv",header = T, sep=",")
+speed_lato_biciclette <- speed_lato_biciclette[ , !names(speed_lato_biciclette) %in% c("angle_deg", "X", "Y") ]
+speed_lato_biciclette$place <- "Bicycle parking"
+speed_lato_biciclette$place <- as.factor(speed_lato_biciclette$place)
+
+
+density_lato_biciclette <- read.csv("D:/Federico/CityFLows/output_files/all_ID_densities_lato_biciclette_a.csv",header = T, sep=",")
+density_lato_biciclette <- density_lato_biciclette[ , !names(density_lato_biciclette) %in% c("X", "Y") ]
+density_lato_biciclette$place <- "Bicycle parking"
+density_lato_biciclette$place <- as.factor(density_lato_biciclette$place)
+ 
+
+############################################
+############ DENSITY #######################
+############################################
+density <- rbind(density_duca_aosta,
+                 # density_lato_biciclette,
+                 density_lato_taxi)
+
+## remove rows with NAs
+density <- density[complete.cases(density), ] 
+density <- density %>% 
+  filter_all(all_vars(!is.infinite(.)))
+
+density <- density %>%
+  mutate(timedate = ymd_hms(timedate, tz = "UTC"))
+
+
+density <- density %>%
+  filter(Ds < 5 & Ds > 0,
+         density_v  < 5 & density_v > 0,
+         density_vI < 5 & density_vI > 0)
+
+##########################################
+############ SPEED #######################
+##########################################
+speed <- rbind(speed_duca_aosta,
+               speed_lato_taxi)
+               # speed_lato_biciclette)
+
+##---> only select speed <= 1 m/s
+
+speed <- speed %>%
+  filter(speed <= 2.5 & speed > speed_FWD_motion)
+
+
+## remove rows with NAs
+speed <- speed[complete.cases(speed), ]   # units ---> [m/s]
+## remove Inf numbers
+speed <- speed %>% 
+  filter_all(all_vars(!is.infinite(.)))
+
+speed <- speed %>%
+  mutate(timedate = ymd_hms(timedate, tz = "UTC"))
+
+remove(density_duca_aosta)
+remove(density_lato_biciclette)
+remove(density_lato_taxi)
+remove(speed_duca_aosta)
+remove(speed_lato_biciclette)
+remove(speed_lato_taxi)
+
+```
+
+
+*<br/><br/>*
+
+
+
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5, fig.cap ="**Figure 3.** Mean pedestrian daily speed at two monitored site around the Stazione Centrale in Milan during weekdays."}
+
+###############################
+### summary stats by day ######
+###############################
+
+
+## get the DAY and HOUR (of the week) of observations
+speed <- speed %>%
+  mutate(day = wday(timedate, label=TRUE)) %>%
+  mutate(hour = hour(timedate))
+speed$day <- as.factor((speed$day))
+speed$hour <- as.factor((speed$hour))
+
+
+
+## resample to 1 hour (make the HOURLY mean)
+hourly_speed <- speed %>%
+    group_by(Date=floor_date(timedate, "1 hour"), place) %>%    
+    summarize(mean_speed = mean(speed, na.rm = T))
+
+
+
+SPEED_daily <- hourly_speed %>%
+mutate(day = wday(Date, label=TRUE)) %>%
+  mutate(hour = hour(Date))
+SPEED_daily$day <- as.factor((SPEED_daily$day))
+SPEED_daily$hour <- as.factor((SPEED_daily$hour))
+
+
+##---> make DAILY AVERAGES
+SPEED_daily <- SPEED_daily %>%
+  dplyr::group_by(day,
+                  place) %>%    ## add number of camera
+  summarise(mean_speed = mean(mean_speed, na.rm = TRUE))
+## round mean_speed
+SPEED_daily <- SPEED_daily %>%
+  mutate(mean_speed = round(mean_speed, digits = 2) )
+
+max_speed <- max(SPEED_daily$mean_speed)
+
+###################################################
+### plot SPEED by DAY #######
+###################################################
+
+
+p <- ggplot(data = SPEED_daily,
+              aes(day, mean_speed, fill = day)) + guides(fill=FALSE) +
+    geom_bar(stat = "identity") + 
+    facet_wrap( ~ place, ncol = 3) +
+    # facet_grid(direzione ~ vehtype, scales = "free", space = "free") +
+    guides(fill=FALSE) +
+    ylim(0, max_speed+0.1) +
+    theme_bw() +
+    theme( strip.text = element_text(size = 13)) +
+    theme(axis.text.x=element_text(angle=0,hjust=1,vjust=0.5)) +
+    theme(axis.text.x=element_text(size=11,face="bold", colour = "black")) +
+    theme(axis.title.x = element_blank()) +                  # Remove x-axis label
+    ylab("mean speed (m/s)") +            # Set y-axis label
+    theme(axis.title.y = element_text(face="bold", colour="black", size=12),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=11)) +
+    xlab("") +            # Set y-axis label
+    theme(axis.title.x = element_text(face="bold", colour="black", size=12),
+          axis.text.x  = element_text(angle=45, vjust=1, size=12)) +
+    geom_text(aes(label = paste(mean_speed)), size = 3, hjust = 0.5,  vjust = -0.5) +
+    ggtitle("Mean Speed - Milano Stazione Centrale (from 06 October to 24 October 2021)") + 
+    theme(plot.title = element_text(lineheight=.8, face="bold"))
+  p
+
+```
+
+*<br/><br/>*
+
+
+
+*<br/><br/>*
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap ="**Figure 4.** Distribution of the mean hourly pedestrian speed at two monitored sites around the Stazione Centrale in Milan during weekdays."}
+
+################################
+### summary stats by hour ######
+################################
+
+
+## resample to 1 hour
+hourly_speed_feriali <- speed %>%
+   filter(!day %in% c("sab", "dom")) %>%
+    group_by(Date=floor_date(timedate, "1 hour"), place) %>%   
+  summarize(mean_speed = mean(speed, na.rm = T))
+
+hourly_speed_feriali <- hourly_speed_feriali %>%
+mutate(day = wday(Date, label=TRUE)) %>%
+  mutate(hour = hour(Date))
+hourly_speed_feriali$day <- as.factor((hourly_speed_feriali$day))
+hourly_speed_feriali$hour <- as.factor((hourly_speed_feriali$hour))
+
+
+
+##---> make HOURLY AVERAGES
+hourly_speed_feriali <- hourly_speed_feriali %>%
+  group_by(hour,
+           place) %>%   
+  summarise(mean_speed = mean(mean_speed, na.rm = TRUE))
+
+## round mean_speed
+hourly_speed_feriali <- hourly_speed_feriali %>%
+  mutate(mean_speed = round(mean_speed, digits = 2) )
+
+
+
+hourly_speed_feriali <- as.data.frame(hourly_speed_feriali)
+
+max_speed <- max(hourly_speed_feriali$mean_speed)
+
+hourly_speed_feriali$hour <- unfactor(hourly_speed_feriali$hour)
+hourly_speed_feriali$hour <- as.numeric(hourly_speed_feriali$hour)
+
+#### plot
+
+
+p <- ggplot(data = hourly_speed_feriali,
+              aes(hour, mean_speed, fill = hour)) + guides(fill=FALSE) +
+    geom_bar(stat = "identity") + 
+    facet_wrap( ~ place, ncol = 4) +  
+    # facet_grid(direzione ~ vehtype, scales = "free", space = "free") +
+    guides(fill=FALSE) +
+    ylim(0,max_speed+0.1) +
+    theme_bw() +
+    theme( strip.text = element_text(size = 13)) +
+    theme(axis.text.x=element_text(angle=0,hjust=1,vjust=0.5)) +
+    theme(axis.text.x=element_text(size=11,face="bold", colour = "black")) +
+    theme(axis.title.x = element_blank()) +                  # Remove x-axis label
+    ylab("speed (m/s)") +            # Set y-axis label
+    xlab(expression(paste(""))) +
+    theme(axis.title.y = element_text(face="bold", colour="black", size=10),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=9)) +
+    xlab("") +            # Set y-axis label
+    theme(axis.title.x = element_text(face="bold", colour="black", size=12),
+          axis.text.x  = element_text(angle=0, vjust=0.5, size=12, hjust = 0.5)) + 
+    theme(axis.title.y = element_text(face="bold", colour="black", size=12),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=12)) +
+    scale_x_continuous(breaks=c(0, 5, 10, 15, 20)) +
+   ggtitle("Mean Speed on WORKING DAYS @Milano Stazione Centrale (from 06 to 24 October 2021)") +  
+    theme(plot.title = element_text(lineheight=.8, face="bold"))
+  p
+
+
+```
+
+
+*<br/><br/>*
+
+
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap ="**Figure 5.** Mean pedestrian daily speed at two monitored sites around the Stazione Centrale in Milan during weekends."}
+
+################################
+### summary stats by hour ######
+################################
+
+
+## resample to 1 hour
+hourly_speed_weekend <- speed %>%
+   filter(day %in% c("sab", "dom")) %>%
+    group_by(Date=floor_date(timedate, "1 hour"), place) %>%  
+  summarize(mean_speed = mean(speed, na.rm = T))
+
+hourly_speed_weekend <- hourly_speed_weekend %>%
+mutate(day = wday(Date, label=TRUE)) %>%
+  mutate(hour = hour(Date))
+hourly_speed_weekend$day <- as.factor((hourly_speed_weekend$day))
+hourly_speed_weekend$hour <- as.factor((hourly_speed_weekend$hour))
+
+
+##---> make HOURLY AVERAGES
+hourly_speed_weekend <- hourly_speed_weekend %>%
+  group_by(hour,
+           place) %>%   
+  summarise(mean_speed = mean(mean_speed, na.rm = TRUE))
+## round mean_speed
+hourly_speed_weekend <- hourly_speed_weekend %>%
+  mutate(mean_speed = round(mean_speed, digits = 2) )
+
+max_speed <- max(hourly_speed_weekend$mean_speed)
+
+hourly_speed_weekend <- as.data.frame(hourly_speed_weekend)
+
+hourly_speed_weekend$hour <- unfactor(hourly_speed_weekend$hour)
+hourly_speed_weekend$hour <- as.numeric(hourly_speed_weekend$hour)
+
+#### plot
+p <- ggplot(data = hourly_speed_weekend,
+              aes(hour, mean_speed, fill = hour)) + guides(fill=FALSE) +
+    geom_bar(stat = "identity") + 
+    facet_wrap( ~ place, ncol = 4) +
+    guides(fill=FALSE) +
+    ylim(0,max_speed+0.1) +
+    theme_bw() +
+    theme( strip.text = element_text(size = 13)) +
+    theme(axis.text.x=element_text(angle=0,hjust=1,vjust=0.5)) +
+    theme(axis.text.x=element_text(size=11,face="bold", colour = "black")) +
+    theme(axis.title.x = element_blank()) +                  # Remove x-axis label
+    ylab("speed (m/s)") +            # Set y-axis label
+    xlab(expression(paste(""))) +
+    theme(axis.title.y = element_text(face="bold", colour="black", size=10),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=9)) +
+    xlab("") +            # Set y-axis label
+    theme(axis.title.x = element_text(face="bold", colour="black", size=12),
+          axis.text.x  = element_text(angle=0, vjust=0.5, size=12, hjust = 0.5)) + 
+    theme(axis.title.y = element_text(face="bold", colour="black", size=12),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=12)) +
+    scale_x_continuous(breaks=c(0, 5, 10, 15, 20)) +
+   ggtitle("Mean Speed on WEEKENDs @Milano Stazione Centrale (from 06 to 24 October 2021)") + 
+    theme(plot.title = element_text(lineheight=.8, face="bold"))
+  p
+
+
+```
+
+*<br/><br/>*
+
+## 2. Temporal trend of pedestrian density around the Stazione Centrale in Milan
+
+Estimation of pedestrian density was carried out using two different methods. 
+The first method was based on the **standard density calculation** defined as the ratio between the number of people inside a defined area and the area itself. In that case, a grid composed of square cells of 2x2 $m^{2}$ was overlaid to the studied area. The average pedestrian density in each cell was estimated by considering the number of people crossing the cell and its area.  
+The second method is about the calculation of **Voronoi diagram** for all pedestrian, giving well defined cells for each person. Voronoi cells are not of regular size and they are built around each person by considering its near neighbors. Indeed, the Voronoi diagram assigns to every pedestrian its closer area than any other one. 
+In a situation considered homogeneous, densities estimated with the Voronoi methodology do not show considerable variations, on the other hand they highlight possible inhomogeneities in the density distribution. Indeed, with the Voronoi method the density is estimated considering the ratio between the number of people within each square cell and the total areas of the Voronoi cells intersecting the square cell itself. 
+
+As for speed estimation, density values were averaged over a time range of 15 minutes. Considering the high frequency acquisition of frame images per minute, in each grid cell, density values were firstly averaged over *each minute*. In the following, another average was computed every **15 minutes**.    
+
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap ="**Figure 6.** Mean density by day of the week in the three monitored areas around the Stazione Centrale in Milan. Density is expressed as $m^-2$ and was estimated with standard and Vornoi diagram methods."}
+
+###############################
+### summary stats by day ######
+###############################
+
+
+## get the months of observations
+# data$month <- format(data$timedate, format = "%b")
+
+## get the DAY and HOUR (of the week) of observations
+density <- density %>%
+  mutate(day = wday(timedate, label=TRUE)) %>%
+  mutate(hour = hour(timedate))
+density$day <- as.factor((density$day))
+density$hour <- as.factor((density$hour))
+
+
+
+## resample to 1 hour (make the HOURLY mean)
+hourly_density <- density %>%
+    group_by(Date=floor_date(timedate, "1 hour"), place) %>%    
+    summarize(mean_standard_density = mean(Ds, na.rm = T),
+             # mean_voronoi_density = mean(density_v, na.rm = T),
+              mean_voronoi_I_density = mean(density_vI, na.rm = T))
+
+
+
+DENSITY_daily <- hourly_density %>%
+mutate(day = wday(Date, label=TRUE)) %>%
+  mutate(hour = hour(Date))
+DENSITY_daily$day <- as.factor((DENSITY_daily$day))
+DENSITY_daily$hour <- as.factor((DENSITY_daily$hour))
+
+
+##---> make DAILY AVERAGES
+DENSITY_daily <- DENSITY_daily %>%
+  dplyr::group_by(day,
+                  place) %>%    ## add number of camera
+  summarise(mean_standard_density = mean(mean_standard_density, na.rm = T),
+              # mean_voronoi_density = mean(mean_voronoi_density, na.rm = T),
+              mean_voronoi_I_density = mean(mean_voronoi_I_density, na.rm = T))
+## round mean densities
+DENSITY_daily <- DENSITY_daily %>%
+  mutate(mean_standard_density = round(mean_standard_density, digits = 2),
+         # mean_voronoi_density = round(mean_voronoi_density, digits = 2),
+          mean_voronoi_I_density = round(mean_voronoi_I_density, digits = 2))
+
+
+## --->  gather data (only mean densites values)
+DENSITY_daily <- gather(DENSITY_daily,  key = "density_type", value = "mean_density", 3:length(DENSITY_daily)) 
+DENSITY_daily$density_type <- as.factor(DENSITY_daily$density_type)
+DENSITY_daily <- as.data.frame(DENSITY_daily)
+
+max_density <- max(DENSITY_daily$mean_density)
+
+
+###################################################
+### plot SPEED by DAY #######
+###################################################
+
+
+p <- ggplot(data = DENSITY_daily,
+              aes(day, mean_density, fill = day)) + guides(fill=FALSE) +
+    geom_bar(stat = "identity") + 
+    # facet_grid(place ~ density_type, scales = "free", space = "free") +
+    facet_grid(place ~ density_type) +
+    guides(fill=FALSE) +
+    ylim(0, max_density+0.01) +
+    theme_bw() +
+    theme( strip.text = element_text(size = 9)) +
+    theme(axis.text.x=element_text(angle=0,hjust=1,vjust=0.5)) +
+    theme(axis.text.x=element_text(size=11,face="bold", colour = "black")) +
+    theme(axis.title.x = element_blank()) +               
+    ylab(expression(paste("[# / ", m^2, "]"))) +           
+    theme(axis.title.y = element_text(face="bold", colour="black", size=12),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=11)) +
+    xlab("") +            # Set y-axis label
+    theme(axis.title.x = element_text(face="bold", colour="black", size=12),
+          axis.text.x  = element_text(angle=45, vjust=1, size=12)) +
+    geom_text(aes(label = paste(mean_density)), size = 3, hjust = 0.5,  vjust = -0.5) +
+    ggtitle("Mean Density - Milano Stazione Centrale (from 06 to 24 October 2021)") + 
+    theme(plot.title = element_text(lineheight=.8, face="bold"))
+  p
+
+
+```
+
+As for speed analysis densities were initially averaged every **15 minutes** and then averaged by *hour* and by *day*. As shown in **Figure 6**, **Figure 7**, and **Figure 8**, the trend of the averaged density values showed slight difference when using different methodologies (standard and Voronoi diagram). Highest pedestrian density values were observed in the taxi-bus area between 09am and 10am (**Figure 7**).  As shown in Figure 7, the position of density peaks values differs from during working days and weekends.
+
+
+
+
+*<br/><br/>*
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap ="**Figure 7.** Distribution of mean hourly density in the three monitored areas around the Stazione Centrale in Milan during working days."}
+
+################################
+### summary stats by hour ######
+################################
+
+
+## resample to 1 hour
+hourly_density_feriali <- density %>%
+   filter(!day %in% c("sab", "dom")) %>%
+    group_by(Date=floor_date(timedate, "1 hour"), place) %>%   
+  summarize(mean_standard_density = mean(Ds, na.rm = T),
+             #  mean_voronoi_density = mean(density_v, na.rm = T),
+              mean_voronoi_I_density = mean(density_vI, na.rm = T))
+
+hourly_density_feriali <- hourly_density_feriali %>%
+mutate(day = wday(Date, label=TRUE)) %>%
+  mutate(hour = hour(Date))
+hourly_density_feriali$day <- as.factor((hourly_density_feriali$day))
+hourly_density_feriali$hour <- as.factor((hourly_density_feriali$hour))
+
+
+
+##---> make HOURLY AVERAGES
+hourly_density_feriali <- hourly_density_feriali %>%
+  group_by(hour,
+           place) %>%   
+  summarise(mean_standard_density = mean(mean_standard_density),
+             # mean_voronoi_density = mean(mean_voronoi_density, na.rm = T),
+              mean_voronoi_I_density = mean(mean_voronoi_I_density, na.rm = T))
+
+## round mean densities
+hourly_density_feriali <- hourly_density_feriali %>%
+  mutate(mean_standard_density = round(mean_standard_density, digits = 2),
+       #  mean_voronoi_density = round(mean_voronoi_density, digits = 2),
+          mean_voronoi_I_density = round(mean_voronoi_I_density, digits = 2))
+
+
+## --->  gather data (only mean densites values)
+hourly_density_feriali <- gather(hourly_density_feriali,  key = "density_type", value = "mean_density", 3:length(hourly_density_feriali)) 
+hourly_density_feriali$density_type <- as.factor(hourly_density_feriali$density_type)
+hourly_density_feriali <- as.data.frame(hourly_density_feriali)
+
+
+max_density <- max(hourly_density_feriali$mean_density)
+
+hourly_density_feriali$hour <- unfactor(hourly_density_feriali$hour)
+hourly_density_feriali$hour <- as.numeric(hourly_density_feriali$hour)
+
+#### plot
+p <- ggplot(data = hourly_density_feriali,
+              aes(hour, mean_density, fill = hour)) + guides(fill=FALSE) +
+    geom_bar(stat = "identity") + 
+    facet_grid(place ~ density_type, scales = "free", space = "free") +
+    guides(fill=FALSE) +
+    ylim(0,max_density) +
+    theme_bw() +
+    theme( strip.text = element_text(size = 9)) +
+    theme(axis.text.x=element_text(angle=0,hjust=1,vjust=0.5)) +
+    theme(axis.text.x=element_text(size=11,face="bold", colour = "black")) +
+    theme(axis.title.x = element_blank()) +               
+   ylab(expression(paste("[# / ", m^2, "]"))) +       
+    xlab(expression(paste(""))) +
+    theme(axis.title.y = element_text(face="bold", colour="black", size=10),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=9)) +
+    xlab("") +            # Set y-axis label
+    theme(axis.title.x = element_text(face="bold", colour="black", size=12),
+          axis.text.x  = element_text(angle=0, vjust=0.5, size=12, hjust = 0.5)) + 
+    theme(axis.title.y = element_text(face="bold", colour="black", size=12),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=12)) +
+    scale_x_continuous(breaks=c(0, 5, 10, 15, 20)) +
+   ggtitle("Mean Density on WORKING DAYS @Milano Stazione Centrale (from 06 to 24 October 2021)") +  
+    theme(plot.title = element_text(lineheight=.8, face="bold"))
+  p
+
+
+```
+
+
+*<br/><br/>*
+
+
+*<br/><br/>*
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap ="**Figure 8.** Distribution of mean hourly density in the three monitored areas around the Stazione Centrale in Milan during weekends."}
+
+################################
+### summary stats by hour ######
+################################
+
+
+## resample to 1 hour
+hourly_density_weekend <- density %>%
+   filter(day %in% c("sab", "dom")) %>%
+    group_by(Date=floor_date(timedate, "1 hour"), place) %>%   
+  summarize(mean_standard_density = mean(Ds, na.rm = T),
+             # mean_voronoi_density = mean(density_v, na.rm = T),
+              mean_voronoi_I_density = mean(density_vI, na.rm = T))
+
+hourly_density_weekend <- hourly_density_weekend %>%
+mutate(day = wday(Date, label=TRUE)) %>%
+  mutate(hour = hour(Date))
+hourly_density_weekend$day <- as.factor((hourly_density_weekend$day))
+hourly_density_weekend$hour <- as.factor((hourly_density_weekend$hour))
+
+
+
+##---> make HOURLY AVERAGES
+hourly_density_weekend <- hourly_density_weekend %>%
+  group_by(hour,
+           place) %>%   
+  summarise(mean_standard_density = mean(mean_standard_density),
+             # mean_voronoi_density = mean(mean_voronoi_density, na.rm = T),
+              mean_voronoi_I_density = mean(mean_voronoi_I_density, na.rm = T))
+
+## round mean densities
+hourly_density_weekend <- hourly_density_weekend %>%
+  mutate(mean_standard_density = round(mean_standard_density, digits = 2),
+        # mean_voronoi_density = round(mean_voronoi_density, digits = 2),
+          mean_voronoi_I_density = round(mean_voronoi_I_density, digits = 2))
+
+
+## --->  gather data (only mean densites values)
+hourly_density_weekend <- gather(hourly_density_weekend,  key = "density_type", value = "mean_density", 3:length(hourly_density_weekend)) 
+hourly_density_weekend$density_type <- as.factor(hourly_density_weekend$density_type)
+hourly_density_weekend <- as.data.frame(hourly_density_weekend)
+
+
+hourly_density_weekend$hour <- unfactor(hourly_density_weekend$hour)
+hourly_density_weekend$hour <- as.numeric(hourly_density_weekend$hour)
+
+max_density <- max(hourly_density_weekend$mean_density)
+
+#### plot
+p <- ggplot(data = hourly_density_weekend,
+              aes(hour, mean_density, fill = hour)) + guides(fill=FALSE) +
+    geom_bar(stat = "identity") + 
+    facet_grid(place ~ density_type, scales = "free", space = "free") +
+    guides(fill=FALSE) +
+    ylim(0,max_density) +
+    theme_bw() +
+    theme( strip.text = element_text(size = 10)) +
+    theme(axis.text.x=element_text(angle=0,hjust=1,vjust=0.5)) +
+    theme(axis.text.x=element_text(size=11,face="bold", colour = "black")) +
+    theme(axis.title.x = element_blank()) +               
+   ylab(expression(paste("[# / ", m^2, "]"))) +       
+    xlab(expression(paste(""))) +
+    theme(axis.title.y = element_text(face="bold", colour="black", size=10),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=9)) +
+    xlab("") +            # Set y-axis label
+    theme(axis.title.x = element_text(face="bold", colour="black", size=12),
+          axis.text.x  = element_text(angle=0, vjust=0.5, size=12, hjust = 0.5)) + 
+    theme(axis.title.y = element_text(face="bold", colour="black", size=12),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=12)) +
+    scale_x_continuous(breaks=c(0, 5, 10, 15, 20)) +
+   ggtitle("Mean Density on WEEKENDs @Milano Stazione Centrale (from 06 to 24 October 2021)") +  
+    theme(plot.title = element_text(lineheight=.8, face="bold"))
+  p
+
+
+```
+
+
+*<br/><br/>*
+
+
+
+## 2. Speed distribution and tentative modeling
+
+Distribution of pedestrian speed walking through the three monitored sites around the Stazione Centrale are shown in **Figure 9**. After several trials, a Log-normal distribution was found to better fit the pedestrian speed. Mismatching between observed and simulated data is more remarkable along the tail of the speed distribution at higher speeds. Although, the Log-Normal distribution might represent the aleatory movement of pedestrian, from the numerically point of view, it can only be considered a tentative model representing the pedestrian speed distribution.    
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap ="**Figure 9.** Speed distribution of pedestrians at the two monitored sites (black line). Log-normal distribution was tentatively used to fit the data (red line)."}
+
+## https://www.rdocumentation.org/packages/Rlab/versions/2.15.1/topics/Gamma
+## https://www.r-bloggers.com/2011/05/the-confusing-gamma-parameter/
+
+library(MASS)
+fitnorm <-  fitdistrplus::fitdist(speed$speed, "lnorm")
+# plot(fitnorm)
+mean <- fitnorm$estimate[1]
+sd <- fitnorm$estimate[2]
+
+
+
+ 
+# # KS-test for Log-normal distribution
+# ks.test(speed$speed, "plnorm", mean=mean(speed$speed), sd=sd(speed$speed))
+
+
+library(gamlss)
+library(gamlss.dist)
+library(gamlss.add)
+
+### find the best model fitting the data
+# x <- speed$speed
+# fit <- fitDist(x, k = 2, type = "realplus", trace = FALSE, try.gamlss = TRUE)
+# summary(fit)
+# Family:  c("BCPEo", "Box-Cox Power Exponential-orig.") 
+# Coefficient(s):
+#               Estimate   Std. Error  t value   Pr(>|t|)    
+# eta.mu    -1.107406177  0.000544465 -2033.93 < 2.22e-16 ***
+# eta.sigma  7.680817857           NA       NA         NA    
+# eta.nu     4.641096138           NA       NA         NA    
+# eta.tau   -1.952636071           NA       NA         NA 
+
+
+# p <-ggplot(speed, aes(speed)) +
+#     geom_density(alpha = 0.5) +
+#   stat_function(fun = dBCPEo, size=2, color='red',
+#                  args = list(mu=0.3304149,
+#                       sigma= 2666,
+#                       nu = fit$nu, 
+#                       tau = 0.12318995))
+# p
+
+
+p <-ggplot(speed, aes(speed)) +
+    geom_density(alpha = 0.5) +
+  stat_function(fun = dBCPEo, size=2, color='red',
+                 args = list(mu=0.36,
+                      sigma= 2200,
+                      nu = 4, 
+                      tau = 0.13418995))
+# p
+
+
+d <- density(speed$speed) # returns the density data
+# plot(d)
+
+# plot(function(x)dBCPEo(x, mu=fit$mu,
+#                       sigma= fit$sigma,
+#                       nu = fit$nu, 
+#                       tau = fit$tau), 0.0, 15, 
+#  main = "The BCPE  density mu=..,sigma=..,nu=.., tau=..", 
+#  xlim=c(0, 2.5))
+
+
+# # modelled <- as.data.frame(fit$y)
+# colnames(modelled) <- "speed"
+# 
+# ## build a dataframe with real data and simulated data
+# measured <- data.frame(observation = "observations", speed = speed$speed)
+# modelled <- data.frame(observation = "simulations", speed = modelled$speed)
+# ZZZ <- rbind(measured, modelled)
+# colorData <- brewer.pal(length(unique(ZZZ$observation)), "Set1")
+# # Replace first color first wanted grey
+# colorData[1] <- "blue"
+# colors <- c(
+#   "observations" = "blue",
+#   "simulations" = "red"
+# )
+
+
+
+# BCPE()   #
+# library(gamlss) 
+# data(abdom)
+# h <- gamlss(y~cs(x,df=3), sigma.formula=~cs(x,1), family=BCPE, data=abdom) 
+# plot(h)
+# plot(function(x)dBCPE(x, mu=5,sigma=.5,nu=1, tau=3), 0.0, 15, 
+#  main = "The BCPE  density mu=5,sigma=.5,nu=1, tau=3")
+
+
+
+plots <- lapply(split(speed, speed$place),FUN=function(speed_dist){
+    ggplot(speed_dist, aes(speed)) +
+    geom_density(alpha = 0.5) +
+    # ylim(0, 0.035) +
+    
+    # stat_function(fun = dnorm,    ## fit with Gaussian
+    #               args = list(mean = mean(speed_dist$speed),
+    #                        sd = sd(speed_dist$speed)), colour = "red") +
+    stat_function(fun = dlnorm, size=1, color='red',
+                   args = list(mean = -0.36, sd =0.71   )) +
+    # stat_function(fun = dpois,    ## fit with Poisson
+    #               args = list(lambda = mean(speed_dist$speed, na.rm = T)), colour = "blue") +
+
+    # stat_function(fun = dgamma, args = list(rate = 1/sd(speed_dist$speed), shape = 0.8), colour = "blue") + 
+    # stat_function(fun = dgamma, args = list(rate = 1/mean(speed_dist$speed), shape = max(speed_dist$speed)), colour = "blue") +
+
+
+    theme_bw() +
+    theme(axis.title.x = element_text(face="bold", colour="black", size=13),     
+          axis.text.x=element_text(angle=0,hjust=0.5,vjust=0.5, size=12)) +
+    ylab("density") +
+    xlab("speed (m/s)") +
+    theme(axis.title.y = element_text(face="bold", colour="black", size=13),
+          axis.text.y  = element_text(angle=0, vjust=0.5, size=13, colour="black")) 
+    # geom_vline(xintercept=mean(speed_dist$speed), color="blue", linetype="dashed", size=0.5) 
+})
+
+
+# Finally, present the plots on 2 columns.
+grid.arrange(plots$`square Duca d'Aosta`, plots$`Taxi area`, nrow=1, ncol = 2,
+             top = textGrob("Duca Aosta                      Lato Taxi",gp=gpar(fontsize=20,font=3)))
+
+```
+
+
+
+*<br/><br/>*
+
+
+## 4. Spatial distribution of pedestrian density around the Stazione Centrale in Milan
+
+Spatial representation of mean pedestrian density over the monitored sites was carried out by averaging 15 minutes mean values obtained for each grid cell during the time of the observation. As explained above, data consistency was assured by averaging the total number of pedestrian crossing each cell within the same time range. This was fundamental to avoid mismatches when averaging data from different time periods. From the density heatmap in **Figure 10** and **Figure 11** we can observe several zones where people density is higher compared to other ares. This contrast is more remarkable when considering output from the Voronoi density calculations (**Figure 11**).
+
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 10**. Spatial distribution of of mean pedestrian standard density in Piazza Duca d'Aosta at the Stazione Centrale in Milan from 06 to 24 October 2021. The area of each cell corresponds to a surface area of 4 $m^2$. ", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Standard_Density_mean_duca_aosta.png")
+```
+
+*<br/><br/>*
+
+
+```{r, echo=FALSE, fig.cap="**Figure 11**. Spatial distribution of of mean pedestrian density using the Voronoi methodology in Piazza Duca d'Aosta at the Stazione Centrale in Milan from 06 to 24 October 2021. ", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Density_vI_mean_duca_aosta.png")
+```
+
+*<br/><br/>*
+
+**Figure 12** shows the overlap of the Voronoi density heatmap with the top view of the Piazza Duca d'Aosta. The overalp was possible by comparing several images with a series of density heatmaps collected at different times of the day.
+
+*<br/><br/>*
+
+```{r, echo=FALSE, fig.cap="**Figure 12**. Overlap of the spatial distribution of mean pedestrian Voronoi density with Piazza Duca d'Aosta from 06 to 23 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Voronoi_density_duca_aosta_google_map.png")
+```
+
+*<br/><br/>*
+
+
+In the taxi-bus site, high density cells are mainly located next to the taxi drop area and also towards the entrance of the station. Slightly higher density is observable in the center-left side of the monitored area where we can find pedestrian approaching the bus-terminal area next to the station (**Figure 13** and **Figure 14**).
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 13**. Spatial distribution of mean pedestrian standard density in the taxi-bus site next to the Stazione Centrale from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Standard_Density_mean_lato_taxi.png")
+```
+
+*<br/><br/>*
+
+
+```{r, echo=FALSE, fig.cap="**Figure 14**. Spatial distribution of of mean pedestrian density using the Voronoi in the taxi-bus site next to the Stazione Centrale from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Density_vI_mean_lato_taxi.png")
+```
+
+
+
+*<br/><br/>*
+
+
+```{r, echo=FALSE, fig.cap="**Figure 15**. Overlap of the spatial distribution of mean pedestrian Voronoi density with taxi-bus site next to the Stazione Centrale in Milan from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Voronoi_density_lato_taxi_google_map.png")
+```
+
+
+
+*<br/><br/>*
+
+## 3. Spatial distribution of pedestrian speed around the Stazione Centrale in Milan
+
+For the spatial representation of the pedestrian mean speed over each monitored site, we have considered the grid of 2x2 $m^2$ area superimposed to the Piazza Duca d'Aosta and to the taxi-bus location around the Stazione Centrale in Milan. As said above, since the mean speed for each ID were estimated by considering the distance between two consecutive positions of the pedestrian and the time intercurring between them, it was then possible to keep track of speed value of pedestrian crossing each grid cell. Therefore, all speed values within the same cell were averaged by considering mean values of 15 minutes for each pedestrian. 
+**Figure 16**, **Figure 17**, **Figure 18** and **Figure 19** show the speed heatmaps over the sites Piazza Duca d'Aosta and the taxi-bus site during the morning and during the afternoon. 
+
+
+```{r, echo=FALSE, fig.cap="**Figure 16**. Spatial distribution mean pedestrian speed in the Piazza Duca d'Aosta between 06am and 10am from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/all_mean_speed_duca_aosta_morning.png")
+```
+
+*<br/><br/>*
+
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 17**.Spatial distribution mean pedestrian speed in the Piazza Duca d'Aosta between 05pm and 07pm from 06 to 24 October 2021. ", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/all_mean_speed_duca_aosta_evening.png")
+```
+
+*<br/><br/>*
+
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 18**.Overlap of the spatial distribution of mean pedestrian speed in the Piazza Duca d'Aosta site next to the Stazione Centrale in Milano between 06am and 10am from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Speed_Morning_duca_aosta_google_map.png")
+```
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 19**.Overlap of the spatial distribution of mean pedestrian speed in the piazza Duca d'Aosta site next to the Stazione Centrale in Milano between 05pm and 07pm from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Speed_Evening_duca_aosta_google_map.png")
+```
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 20**. Spatial distribution mean pedestrian speed in the taxi-bus site between 06am and 10am from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/all_mean_speed_lato_taxi_morning.png")
+```
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 21**Spatial distribution mean pedestrian speed in the taxi-bus site between 05pm and 07pm from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/all_mean_speed_lato_taxi_evening.png")
+```
+
+*<br/><br/>*
+
+
+```{r, echo=FALSE, fig.cap="**Figure 22**.Overlap of the spatial distribution of mean pedestrian speed in the taxi-bus site next to the Stazione Centrale in Milano between 06am and 10am from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Speed_Morning_lato_taxi_google_map.png")
+```
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 23**.Overlap of the spatial distribution of mean pedestrian speed in the taxi-bus site next to the Stazione Centrale in Milano between 05pm and 07pm from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Speed_Evening_lato_taxi_google_map.png")
+```
+
+*<br/><br/>*
+
+
+
+
+## 4. Spatial distribution of mean walking direction
+
+Walking direction followed by pedestrians was estimated considering the distance between **origin** and **destination** of each trajectory. Thus, for each ID it was possible to determine the angle (direction expressed in 0-360° degrees) between the instant at the origin and the instant at the destination point. Spatial representation of the average direction followed by all pedestrian in each grid cell was carried out by averaging all angles within each cell. As shown in Figure XXX, directions were represented as arrows whose length corresponded to the reciprocal of the **standard deviation** of the averaged angles. Longest arrows correspond to robust directions followed pedestrians. 
+**Figure 24** and **Figure 26** shows the main average direction of pedestrian in the Piazza Duca d'Aosta and in the taxi-area from morning hour between 06am and 10am. Only slightly difference can be observed among the orientation and length of the arrows during morning and afternoon hours. During morning hours we can find a not negligible number of arrows coming from the exit of the Piazza and from the subways. Instead during evening hours we can see that more ordered arrows are oriented toward the subway and the entrance of the station. On the other hand, in the taxi-bus site, arrows orientation did not show considerable difference between morning and evening hours with the exception of an increase in the number of longer arrows oriented toward the entrance of the station during evening hours compared to morning hours.
+
+*<br/><br/>*
+
+```{r, echo=FALSE, fig.cap="**Figure 24**. Spatial distribution of of mean walking direction in Piazza Duca d'Aosta between 06am and 10am at the Stazione Centrale in Milan from 06 to 24 October 2021. ", out.width = '70%', fig.align='center'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Direction_Morning_duca_aosta_google_map.jpg")
+
+```
+
+
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 25**. Spatial distribution of of mean walking direction in Piazza Duca d'Aosta between 05pm and 07pm at the Stazione Centrale in Milan from 06 to 24 October 2021.", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Direction_Evening_duca_aosta_google_map.jpg")
+```
+
+*<br/><br/>*
+
+
+```{r, message = FALSE, echo = FALSE, warning = FALSE, fig.width=9,fig.height=5,  fig.cap = "**Table 2.**"}
+
+
+### load clustered speed and directions
+cluster_direction <- read.csv("D:/Federico/CityFLows/output_files/all_day_clustered_directions_from_06_to_24_Oct2021.csv")[-1]
+cluster_speeds <- read.csv("D:/Federico/CityFLows/output_files/all_day_clustered_speeds_from_06_to_24_Oct2021.csv")[-1]
+cluster_directions_speed <- cluster_speeds %>%
+  left_join(cluster_direction, by = c("ID", "counts"))
+
+
+
+## normalize counts
+cluster_directions_speed$norm_counts <- round( (cluster_directions_speed$counts)/ max(cluster_directions_speed$counts), digits = 1)
+cluster_directions_speed$speed <- round( cluster_directions_speed$speed, digits = 1)
+cluster_directions_speed$angle_deg <- round( cluster_directions_speed$angle_deg, digits = 1)
+cluster_directions_speed <- cluster_directions_speed %>%
+  dplyr::select(ID,
+         norm_counts,
+         speed,
+         angle_deg)
+names(cluster_directions_speed) <- c("cluster ID", "weight", "speed (m/s)", "direction (°)")
+
+
+Caption <- paste0("**Table 2.** Clustered values for speed and direction obtained from K-means clustering of pedestrian data at the Piazza Duca d'Aosta between from 06 to 24 October 2021.")
+set.caption(Caption)
+panderOptions("table.emphasize.rownames", FALSE) # remove row.names from the table
+panderOptions("table.split.table", Inf) # to avoid to split tables if rows are too long
+panderOptions('table.alignment.default', function(df) ifelse(sapply(df, is.numeric), 'right', 'left')) # right alignment for numeric, left otherwise
+pander(cluster_directions_speed, emphasize.strong.cols = 1, missing = "")
+
+
+```
+
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 25a**. Polar diagram of main directions followed by pedestrian in Piazza Duca d'Aosta at the Stazione Centrale in Milan from 06 to 24 October 2021. Length of the arrow represents the importance of that direction while the number indicates the average speed along that direction.", out.width = '70%', fig.align='center'}
+
+
+
+plot1 <- readPNG('D:/Federico/CityFLows/output_files/trajectories/clustered_directions_morning.png')
+plot2 <- readPNG('D:/Federico/CityFLows/output_files/trajectories/clustered_directions_evening.png')
+
+grid.arrange(rasterGrob(plot1),rasterGrob(plot2),nrow=1, ncol = 2,
+             top = textGrob("Piazza Duca Aosta",gp=gpar(fontsize=20,font=3)))
+
+
+```
+
+*<br/><br/>*
+
+Clustering was applied to all values of speed and directions recorded from the Piazza Duca d'Aosta. Clustering was carried out according to the K-mean methodology. Results shown in **Figure 25a** indicates pedestrian data could be grouped into three main categories. Each categories was weighted according to the number of events. During morning hours (from 7am to 10pm), most of pedestrian were walking towards the entrance of the subway located on the northeastern side of the square Duca d'Aosta at a speed of about 0.5 m/s. Other pedestrian were observed walking outside the square  with direction southwest and southeast at higher speeds of about 1.2 and 1.9 m/s, respectively. We could say that during morning hours, most people were walking towards the entrance of the subway or of the station, while another considerable number was walking towards the taxi-bus area.
+During evening hours (from 5pm to 7pm), most of pedestrian were observed walking from the exit of the square while a considerable number was observed walking towards the entravne of the station and of the subway. Only a small fraction was observed walking towards the taxi-bus area.
+
+
+```{r, echo=FALSE, fig.cap="**Figure 26**. Spatial distribution of of mean walking direction the taxi-bus site between 06am and 10am from 06 to 24 October 2021. ", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Direction_Morning_lato_taxi_google_map.png")
+```
+
+*<br/><br/>*
+
+
+
+```{r, echo=FALSE, fig.cap="**Figure 27**. Spatial distribution of of mean walking direction the taxi-bus site between 05pm and 07pm from 06 to 24 October 2021. ", out.width = '70%'}
+knitr::include_graphics("D:/Federico/CityFLows/output_files/trajectories/Direction_Evening_lato_taxi_google_map.png")
+```
+
+*<br/><br/>*
